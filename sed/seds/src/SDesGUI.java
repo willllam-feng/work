@@ -34,7 +34,7 @@ public class SDesGUI extends JFrame {
     }
 
     /**
-     * 初始化GUI界面
+     * 初始化GUI界面（响应式布局，组件可随窗口大小自适应）
      */
     private void initUI() {
         // 窗口基本设置
@@ -43,18 +43,20 @@ public class SDesGUI extends JFrame {
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null); // 居中显示
 
-        // 主面板（GridBagLayout布局）
+        // 主面板（GridBagLayout布局，支持响应式调整）
         JPanel mainPanel = new JPanel(new GridBagLayout());
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(8, 8, 8, 8);
-        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.fill = GridBagConstraints.HORIZONTAL; // 默认水平填充
+        gbc.weightx = 1.0; // 所有组件默认分配水平额外空间
 
         // -------------------------- 基础加解密区域 --------------------------
         // 明文标签与输入框
-        JLabel plaintextLabel = new JLabel("明文 (8bit二进制/ASCII):");
+        JLabel plaintextLabel = new JLabel("明文或密文 (8bit二进制/ASCII):");
         gbc.gridx = 0;
         gbc.gridy = 0;
         gbc.gridwidth = 1;
+        gbc.weighty = 0; // 标签不分配垂直额外空间
         mainPanel.add(plaintextLabel, gbc);
 
         plaintextField = new JTextField(45);
@@ -74,7 +76,7 @@ public class SDesGUI extends JFrame {
         mainPanel.add(keyField, gbc);
 
         // 操作按钮面板
-        JPanel buttonPanel = new JPanel();
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
         encryptBtn = new JButton("二进制加密");
         decryptBtn = new JButton("二进制解密");
         asciiEncryptBtn = new JButton("ASCII加密");
@@ -105,7 +107,13 @@ public class SDesGUI extends JFrame {
         JScrollPane resultScroll = new JScrollPane(resultArea);
         gbc.gridx = 1;
         gbc.gridy = 3;
+        gbc.fill = GridBagConstraints.BOTH; // 结果区域同时水平和垂直填充
+        gbc.weighty = 1.0; // 分配垂直方向额外空间
         mainPanel.add(resultScroll, gbc);
+
+        // 重置权重和填充方式，避免影响后续组件
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weighty = 0;
 
         // -------------------------- 暴力破解区域 --------------------------
         JLabel bfTitleLabel = new JLabel("=== 暴力破解（明密文对需为8bit二进制）===");
@@ -148,14 +156,19 @@ public class SDesGUI extends JFrame {
         JScrollPane bfResultScroll = new JScrollPane(bfResultArea);
         gbc.gridx = 1;
         gbc.gridy = 7;
+        gbc.fill = GridBagConstraints.BOTH; // 破解结果区域同时水平和垂直填充
+        gbc.weighty = 1.0; // 分配垂直方向额外空间
         mainPanel.add(bfResultScroll, gbc);
 
-        // 添加主面板到窗口
-        add(mainPanel);
+        // 添加主面板到窗口，并设置主面板可滚动（防止内容溢出）
+        JScrollPane mainScroll = new JScrollPane(mainPanel);
+        mainScroll.setBorder(null); // 移除边框
+        add(mainScroll);
 
         // 绑定按钮事件
         bindEvents();
     }
+
 
     /**
      * 绑定按钮点击事件（直接使用组件引用，避免getComponent()错误）
@@ -207,44 +220,97 @@ public class SDesGUI extends JFrame {
     }
 
     /**
-     * 处理ASCII加解密
+     * 处理ASCII字符串的加密或解密操作
+     * @param isEncrypt true表示加密，false表示解密
      */
     private void handleAsciiOperation(boolean isEncrypt) {
-        String inputStr = plaintextField.getText().trim();
-        String keyStr = keyField.getText().trim();
+        // 清空结果区域
         resultArea.setText("");
 
-        if (keyStr.length() != 10) {
-            resultArea.setText("❌ 错误：密钥必须为10位二进制");
+        // 获取输入和密钥
+        String inputStr = plaintextField.getText().trim();
+        String keyStr = keyField.getText().trim();
+
+        // 1. 验证密钥合法性
+        if (!isValidKey(keyStr)) {
+            resultArea.setText("❌ 错误：密钥必须为10位二进制数字（仅包含0和1）");
             return;
         }
 
         try {
+            // 2. 密钥转换：字符串 -> 整数数组（用于S-DES算法）
             int[] keyArray = SDesUtil.binaryStrToIntArray(keyStr);
+
+            // 3. 输入转换：ASCII字符串 -> 二进制字符串
+            String inputBinary;
+            if (isEncrypt) {
+                // 加密：ASCII明文 -> 二进制
+                inputBinary = SDesUtil.asciiToBinary(inputStr);
+                // 验证加密输入的二进制长度（理论上ASCII转换后一定是8的倍数，此处为防御性检查）
+                if (inputBinary.length() % 8 != 0) {
+                    resultArea.setText("❌ 错误：明文转换后二进制长度异常");
+                    return;
+                }
+            } else {
+                // 解密：密文（ASCII字符对应的二进制）
+                inputBinary = SDesUtil.asciiToBinary(inputStr);
+                // 解密必须保证二进制长度是8的倍数（每个加密块为8位）
+                if (inputBinary.length() % 8 != 0) {
+                    resultArea.setText("❌ 错误：密文对应的二进制长度必须是8的倍数");
+                    return;
+                }
+            }
+
+            // 4. 逐8位块处理（S-DES算法处理单位为8位）
             StringBuilder binaryResult = new StringBuilder();
-            String inputBinary = SDesUtil.asciiToBinary(inputStr);
-
-            if (!isEncrypt && inputBinary.length() % 8 != 0) {
-                resultArea.setText("❌ 错误：密文对应的二进制长度不是8的倍数");
-                return;
-            }
-
-            // 逐字节处理
             for (int i = 0; i < inputBinary.length(); i += 8) {
+                // 截取8位二进制块
                 String byteStr = inputBinary.substring(i, i + 8);
+                // 转换为整数数组
                 int[] byteArray = SDesUtil.binaryStrToIntArray(byteStr);
-                int[] processed = isEncrypt ?
-                        SDesUtil.encrypt(byteArray, keyArray) :
-                        SDesUtil.decrypt(byteArray, keyArray);
-                binaryResult.append(SDesUtil.intArrayToBinaryStr(processed));
+                // 加密/解密处理
+                int[] processedArray = isEncrypt
+                        ? SDesUtil.encrypt(byteArray, keyArray)
+                        : SDesUtil.decrypt(byteArray, keyArray);
+                // 转换回二进制字符串并拼接
+                binaryResult.append(SDesUtil.intArrayToBinaryStr(processedArray));
             }
 
+            // 5. 结果转换：二进制 -> ASCII字符串
             String asciiResult = SDesUtil.binaryToAscii(binaryResult.toString());
-            resultArea.setText(isEncrypt ? "✅ ASCII加密结果: " : "✅ ASCII解密结果: " + asciiResult);
-        } catch (IllegalArgumentException ex) {
-            resultArea.setText("❌ 错误：" + ex.getMessage());
+
+            // 6. 显示结果（修复三元运算符拼接问题）
+            String resultPrefix = isEncrypt ? "✅ ASCII加密结果: " : "✅ ASCII解密结果: ";
+            resultArea.setText(resultPrefix + asciiResult);
+
+        } catch (IllegalArgumentException e) {
+            // 处理二进制转换、密钥解析等已知异常
+            resultArea.setText("❌ 错误：" + e.getMessage());
+        } catch (Exception e) {
+            // 处理其他未知异常
+            resultArea.setText("❌ 操作失败：" + e.getMessage());
         }
     }
+
+    /**
+     * 验证密钥是否合法（10位且仅包含0和1）
+     * @param key 待验证的密钥字符串
+     * @return 合法返回true，否则false
+     */
+    private boolean isValidKey(String key) {
+        // 长度必须为10
+        if (key.length() != 10) {
+            return false;
+        }
+        // 仅包含0和1
+        for (char c : key.toCharArray()) {
+            if (c != '0' && c != '1') {
+                return false;
+            }
+        }
+        return true;
+    }
+
 
     /**
      * 处理暴力破解
